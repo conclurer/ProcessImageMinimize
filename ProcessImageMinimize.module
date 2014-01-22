@@ -1,0 +1,300 @@
+<?php
+class ProcessImageMinimize extends WireData implements Module, ConfigurableModule
+{
+
+    public static function getModuleInfo()
+    {
+        return array(
+            'title' => 'ProcessImageMinimize',
+            'author' => 'Conclurer GbR',
+            'summary' => 'Uses minimize.pw to compress your images on the fly, increasing your site load performance by up to 50%',
+            'version' => 40,
+            'autoload' => true
+        );
+    }
+
+    const mz_version = '0.4';
+    const base_url = 'https://minimize.pw/';
+
+    /**
+     * Initializes hooks on Pageimage objects for ->minimize() and ->mz()
+     */
+    public function init()
+    {
+        $this->addHook('Pageimage::minimize', $this, 'getMinimizedPicture');
+        $this->addHook('Pageimage::mz', $this, 'getMinimizedPicture');
+    }
+
+    public function __construct()
+    {
+        $this->licence_valid = 0;
+        $this->backup_licence_key = '';
+        $this->licence_key = '';
+        $this->publicKey = '';
+        $this->limit_reached_till = -1;
+    }
+
+    /**
+     * Returns the secret key for API requests
+     * @return string
+     */
+    protected function secret_key()
+    {
+        return substr(md5(wire("config")->userAuthSalt), 4, 8);
+    }
+
+    /**
+     * Returns the public key for API requests
+     * @return string
+     */
+    protected function public_key()
+    {
+        // If the user changes the licence key
+        if ($this->backup_licence_key != $this->licence_key) {
+            $result = $this->verifyLicenceKey();
+
+            if ($result == false) return '';
+            $this->backup_licence_key = $this->licence_key;
+            $this->licence_valid = 1;
+            $this->publicKey = '';
+            $this->limit_reached_till = -1;
+
+            if ($result['activated'] == true) {
+                $this->publicKey = $result['public_key'];
+            } else {
+                $this->licence_valid = 0;
+            }
+            $this->save_configuration();
+        }
+
+        //If the licence key isn't valid
+        if ($this->licence_valid == 0) return '';
+
+        return $this->publicKey;
+    }
+
+    /**
+     * Writes the configuration settings array
+     */
+    private function save_configuration()
+    {
+        wire('modules')->saveModuleConfigData($this, array(
+            'backup_licence_key' => $this->backup_licence_key,
+            'licence_valid' => $this->licence_valid,
+            'publicKey' => $this->publicKey,
+            'licence_key' => $this->licence_key,
+            'limit_reached_till' => $this->limit_reached_till
+        ));
+    }
+
+    /**
+     * Returns true if the user licence is valid and the user is able to request.
+     * @return bool
+     */
+    protected function able_to_request()
+    {
+        return ($this->public_key() != '');
+    }
+
+    /**
+     * Returns the public key (as json) if the licence key is valid
+     * @return array
+     */
+    private function verifyLicenceKey()
+    {
+        $data = array('secret_key' => $this->secret_key(), 'licence_key' => $this->licence_key);
+        $options = array(
+            'http' => array(
+                'header' => "Content-type: application/x-www-form-urlencoded\r\n",
+                'method' => 'POST',
+                'content' => http_build_query($data),
+            ),
+        );
+
+        $context = stream_context_create($options);
+        $result = @file_get_contents(self::base_url."/process/activate/", false, $context);
+
+        //Abort if request failed
+        if ($result === false) return false;
+
+        return json_decode($result, true);
+    }
+
+    public static function getModuleConfigInputFields(array $data)
+    {
+        $fields = new InputfieldWrapper();
+
+        $field = wire('modules')->get('InputfieldText');
+        $field->name = 'licence_key';
+        $field->label = 'Licence Key';
+        $field->description = "You can either buy or get a free Key at https://www.minimize.pw";
+        if (isset($data['licence_key'])) $field->value = $data['licence_key'];
+
+        $fields->add($field);
+
+        return $fields;
+    }
+
+    /**
+     * Returns the minimized version of a given picture
+     * @param HookEvent $event
+     */
+    public function getMinimizedPicture(HookEvent $event)
+    {
+        $img = $event->object;
+
+        $filename = $this->cachedImagePath($img);
+
+        //If cached minimize version isn't available
+        if (!is_file($filename)) {
+
+            // If the user is able to request and user's monthly limit hasn't reached
+            if ($this->able_to_request() && $this->limit_reached_till < time()) {
+
+                // If the minimized image has been successfully cached
+                if ($this->cacheMinimizedImage($img, $filename)) {
+
+                    //Apply chmod
+                    if (wire('config')->chmodFile) chmod($filename, octdec(wire('config')->chmodFile));
+
+                    //Clone Image Object
+                    $minimized_image = clone $img;
+                    $minimized_image->setFilename($filename);
+                    $minimized_image->setOriginal($img);
+
+                    //print_r(get_class($minimized_image));
+                }
+            }
+        } else {
+
+            //Load cached image
+            $minimized_image = clone $img;
+            $minimized_image->setFilename($filename);
+            $minimized_image->setOriginal($img);
+        }
+
+        if (!isset($minimized_image)) {
+            //echo "SUPERTOAST";
+            $minimized_image = $img;
+        }
+
+        $event->return = $minimized_image;
+    }
+
+    /**
+     * Returns true if the minimized image has been locally saved
+     * @param Pageimage $img
+     * @param $file
+     * @return bool
+     */
+    protected function cacheMinimizedImage(Pageimage $img, $file)
+    {
+        //Send image via HTTP
+        $request = $this->generateStreamContextInfo($img);
+        $context = stream_context_create($request);
+
+        $result = @file_get_contents(self::base_url."/process/{$this->public_key()}/", false, $context);
+
+        //Break if request to server failed.
+        if ($result === false) return false;
+
+        $json = json_decode($result, true);
+
+        // If the result isn't a JSON string, it is the minimized image
+        if ($json == null) {
+            file_put_contents($file, $result);
+            return true;
+        }
+
+        /**
+         * Validate error messages
+         */
+        if ($json["technical"] == "PLAN_REACHED_LIMIT") {
+            $this->limit_reached_till = $this->first_day_of_next_month();
+            $this->save_configuration();
+        } elseif ($json["technical"] == "AUTH_FAILED") {
+            $this->licence_valid = 0;
+            $this->save_configuration();
+        }
+
+        return false;
+    }
+
+    /**
+     * Returns a timestamp, representing the first day of the next month
+     * @return int
+     */
+    protected function first_day_of_next_month()
+    {
+        $curMonth = date('n');
+        $curYear = date('Y');
+        if ($curMonth == 12)
+            return $firstDayNextMonth = mktime(0, 0, 0, 0, 0, $curYear + 1);
+        else
+            return $firstDayNextMonth = mktime(0, 0, 0, $curMonth + 1, 1);
+    }
+
+    /**
+     * Returns the file system path of the cached minimized image
+     * @param Pageimage $img
+     * @return string
+     */
+    protected function cachedImagePath(Pageimage $img)
+    {
+        $basename = basename($img->basename(), "." . $img->ext); // i.e. myfile
+        $basename .= '.mz.' . $img->ext; // i.e. myfile.100x100.mz.jpg or myfile.mz.jpg
+        $filename = $img->pagefiles->path() . $basename;
+        return $filename;
+    }
+
+    /**
+     * Returns the http header for the api request
+     * @param Pageimage $img
+     * @return array
+     */
+    private function generateStreamContextInfo(Pageimage $img)
+    {
+
+        switch ($img->ext) {
+            case 'jpg':
+            case 'jpeg':
+                $mime = "image/jpeg";
+                break;
+
+            case 'png':
+                $mime = "image/png";
+                break;
+
+            default:
+                $mime = "";
+                break;
+        }
+
+        $length = $img->filesize;
+        $nonce = mt_rand(1000, 9999);
+
+        $salt = md5($this->public_key() . $this->secret_key() . $nonce);
+        $basename = basename($img->basename(), "." . $img->ext);
+        $filename = $img->pagefiles->path() . $basename . "." . $img->ext;
+
+        $version = wire('config')->version;
+
+        return array(
+            'http' => array(
+                'method' => 'POST',
+                'header' => array(
+                    "Host: minimize.pw", "Content-Type:" . $mime,
+                    "Content-Length:" . $length,
+
+                    // Additional information for licence validating / quality improvement purposes
+                    // For privacy information, please read our terms and conditions.
+                    "Referer: " . $_SERVER['SERVER_NAME'] . "," . $_SERVER['SERVER_ADDR'] . ",$nonce,$salt",
+                    "User-Agent: ProcessWire/$version/" . self::mz_version
+                ),
+                'content' => file_get_contents($filename)
+            )
+        );
+    }
+}
+
+?>
