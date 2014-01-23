@@ -8,12 +8,12 @@ class ProcessImageMinimize extends WireData implements Module, ConfigurableModul
             'title' => 'ProcessImageMinimize',
             'author' => 'Conclurer GbR',
             'summary' => 'Uses minimize.pw to compress your images on the fly, increasing your site load performance by up to 50%',
-            'version' => 50,
+            'version' => 60,
             'autoload' => true
         );
     }
 
-    const mz_version = '0.5';
+    const mz_version = '0.6';
     const base_url = 'https://minimize.pw/';
 
     /**
@@ -23,6 +23,7 @@ class ProcessImageMinimize extends WireData implements Module, ConfigurableModul
     {
         $this->addHook('Pageimage::minimize', $this, 'getMinimizedPicture');
         $this->addHook('Pageimage::mz', $this, 'getMinimizedPicture');
+        $this->addHook('Pageimages::delete', $this, 'deleteMinimizedPicture');
     }
 
     public function __construct()
@@ -133,6 +134,28 @@ class ProcessImageMinimize extends WireData implements Module, ConfigurableModul
         $fields->add($field);
 
         return $fields;
+    }
+
+    /**
+     * Removes the minimized version of a given picture
+     * @param HookEvent $event
+     */
+    public function deleteMinimizedPicture(HookEvent $event)
+    {
+        $images = $event->object;
+        $image = $event->arguments[0];
+
+        if (is_string($image)) $image = $images->get($image);
+        if (!$image) return;
+
+        $basename = basename($image->basename(), "." . $image->ext);
+
+        //Detect all minimized images that have been created based on the deleted image
+        $files = glob(dirname($this->cachedImagePath($image)) . "$basename*.mz.{$image->ext}");
+        foreach ($files as $file) {
+            @unlink($file);
+            $this->message("Removed minimized version: " . basename($file), Notice::debug);
+        }
     }
 
     /**
