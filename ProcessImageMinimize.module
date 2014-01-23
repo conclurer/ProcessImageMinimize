@@ -8,12 +8,12 @@ class ProcessImageMinimize extends WireData implements Module, ConfigurableModul
             'title' => 'ProcessImageMinimize',
             'author' => 'Conclurer GbR',
             'summary' => 'Uses minimize.pw to compress your images on the fly, increasing your site load performance by up to 50%',
-            'version' => 40,
+            'version' => 50,
             'autoload' => true
         );
     }
 
-    const mz_version = '0.4';
+    const mz_version = '0.5';
     const base_url = 'https://minimize.pw/';
 
     /**
@@ -112,7 +112,7 @@ class ProcessImageMinimize extends WireData implements Module, ConfigurableModul
         );
 
         $context = stream_context_create($options);
-        $result = @file_get_contents(self::base_url."/process/activate/", false, $context);
+        $result = @file_get_contents(self::base_url . "/process/activate/", false, $context);
 
         //Abort if request failed
         if ($result === false) return false;
@@ -148,23 +148,28 @@ class ProcessImageMinimize extends WireData implements Module, ConfigurableModul
         //If cached minimize version isn't available
         if (!is_file($filename)) {
 
-            // If the user is able to request and user's monthly limit hasn't reached
-            if ($this->able_to_request() && $this->limit_reached_till < time()) {
+            //We don't handle images larger than 10M, yet :-(
+            if ($img->filesize <= 10485760) {
 
-                // If the minimized image has been successfully cached
-                if ($this->cacheMinimizedImage($img, $filename)) {
+                // If the user is able to request and user's monthly limit hasn't reached
+                if ($this->able_to_request() && $this->limit_reached_till < time()) {
 
-                    //Apply chmod
-                    if (wire('config')->chmodFile) chmod($filename, octdec(wire('config')->chmodFile));
+                    // If the minimized image has been successfully cached
+                    if ($this->cacheMinimizedImage($img, $filename)) {
 
-                    //Clone Image Object
-                    $minimized_image = clone $img;
-                    $minimized_image->setFilename($filename);
-                    $minimized_image->setOriginal($img);
+                        //Apply chmod
+                        if (wire('config')->chmodFile) chmod($filename, octdec(wire('config')->chmodFile));
 
-                    //print_r(get_class($minimized_image));
+                        //Clone Image Object
+                        $minimized_image = clone $img;
+                        $minimized_image->setFilename($filename);
+                        $minimized_image->setOriginal($img);
+
+                        //print_r(get_class($minimized_image));
+                    }
                 }
             }
+
         } else {
 
             //Load cached image
@@ -193,7 +198,7 @@ class ProcessImageMinimize extends WireData implements Module, ConfigurableModul
         $request = $this->generateStreamContextInfo($img);
         $context = stream_context_create($request);
 
-        $result = @file_get_contents(self::base_url."/process/{$this->public_key()}/", false, $context);
+        $result = @file_get_contents(self::base_url . "/process/{$this->public_key()}/", false, $context);
 
         //Break if request to server failed.
         if ($result === false) return false;
