@@ -8,7 +8,7 @@ class ProcessImageMinimize extends WireData implements Module, ConfigurableModul
         return array(
             'title' => 'ProcessImageMinimize / minimize.pw',
             'author' => 'Conclurer GbR',
-            'summary' => 'Uses minimize.pw to compress your images on the fly, increasing your site load performance by up to 50%',
+            'summary' => 'Uses minimize.pw to compress your images on the fly, increasing your site load performance.',
             'version' => 100,
             'href' => 'https://minimize.pw',
             'autoload' => true
@@ -105,8 +105,6 @@ ON " . self::table_name . " (state) USING BTREE");
             }
             $this->save_configuration();
         }
-
-        #echo var_dump("STEP D");
 
     }
 
@@ -621,37 +619,25 @@ ON " . self::table_name . " (state) USING BTREE");
         if ($data['licence_key'] == '') {
             $field = wire('modules')->get('InputfieldMarkup');
             $field->label = 'Get a License Key';
-            $field->description = 'Please register your mail address at minimize.pw to get a license key.<br>With this license key you are able to compress <b>2000 images</b> for free.';
+            $field->description = 'Please register your mail address at minimize.pw to get a <b>free</b> license key';
 
             $button = wire('modules')->get('InputfieldButton');
             $button->value = 'Get a License';
-            $button->href = 'https://minimize.pw/sign_up';
+            $button->href = 'https://minimize.pw';
             $field->add($button);
 
             $fields->add($field);
         } else {
             $field = wire('modules')->get('InputfieldMarkup');
-            $field->columnWidth = 50;
-            $field->label = 'Extend your Volume';
+            $field->columnWidth = 100;
+            $field->label = 'Manage your License';
             if ($data['limit_reached_till'] < time())
-                $field->description = 'Enjoying minimize.pw so far? Please consider increasing your volume in order to compress even more images.';
+                $field->description = 'Increase your volume and view statistics of your license.';
             else
                 $field->description = '<b>Minimize.pw is unable to compress any more images</b><br>Please buy more credits.';
 
             $button = wire('modules')->get('InputfieldButton');
-            $button->value = 'Buy Credits';
-            $button->href = 'https://minimize.pw/login?license=' . $data['licence_key'];
-            $field->add($button);
-
-            $fields->add($field);
-
-            $field = wire('modules')->get('InputfieldMarkup');
-            $field->columnWidth = 50;
-            $field->label = 'Display Statistics';
-            $field->description = 'Do you want to know how much file size minimize.pw has removed from your images?<br>Take a look at your statistics:';
-
-            $button = wire('modules')->get('InputfieldButton');
-            $button->value = 'Statistics';
+            $button->value = 'Dashboard';
             $button->href = 'https://minimize.pw/login?license=' . $data['licence_key'];
             $field->add($button);
 
@@ -661,17 +647,34 @@ ON " . self::table_name . " (state) USING BTREE");
             $field = wire('modules')->get('InputfieldCheckbox');
             $field->columnWidth = 100;
             $field->name = 'auto_mz_images';
-            $field->label = 'Automatically minimize Images';
-            $field->description = 'If checked, minimize.pw will automatically minimize every photo being uploaded.';
+            $field->label = 'Automatically minimize new Images';
+            $field->description = "If checked, minimize.pw will automatically minimize every new image being uploaded. In this case you don't have to use the mz() API method.";
             if (!empty($data['auto_mz_images'])) $field->set('checked', 'checked');
 
             $fields->add($field);
+
+            $field = wire('modules')->get('InputfieldCheckbox');
+            $field->columnWidth = 100;
+            $field->name = 'no_local_minimizing';
+            $field->label = 'Disable temporary Images';
+            $field->description = "If checked, no temporary images will be created, while the images are in minimize.pw's queue. Recommended if you have large galleries.";
+            if (!empty($data['no_local_minimizing'])) $field->set('checked', 'checked');
+
+            $fields->add($field);
+
+
+            if ($data['replace_images'] == 1 || $data['auto_replace_crop_images'] == 1) {
+                $field = wire('modules')->get('InputfieldMarkup');
+                $field->label = 'Warning';
+                $field->description = '<span style="color: #f14b51"><b>Please be careful! You have enabled replacing images. Existing images might be overwritten!</b></span>';
+                $fields->add($field);
+            }
 
 
             $field = wire('modules')->get('InputfieldCheckbox');
             $field->columnWidth = 50;
             $field->name = 'replace_images';
-            $field->label = 'Replace Original Images';
+            $field->label = 'Replace original Images';
             $field->description = 'If checked, minimize.pw will replace the original image file with the minimized version, rather than adding a ".mz" variation.';
             if (!empty($data['replace_images'])) $field->set('checked', 'checked');
 
@@ -688,22 +691,6 @@ ON " . self::table_name . " (state) USING BTREE");
                 $fields->add($field);
             }
 
-
-            if ($data['replace_images'] == 1 || $data['auto_replace_crop_images'] == 1) {
-                $field = wire('modules')->get('InputfieldMarkup');
-                $field->label = 'Warning';
-                $field->description = '<b>Please be careful! You have enabled replacing images. Existing images might be overwritten!</b>';
-                $fields->add($field);
-            }
-
-            $field = wire('modules')->get('InputfieldCheckbox');
-            $field->columnWidth = 100;
-            $field->name = 'no_local_minimizing';
-            $field->label = 'Disable Local Compression';
-            $field->description = "If checked, no temporary compressed images will be created, while the images are in minimize.pw's queue. Enable this option if you have large galleries to be processed.";
-            if (!empty($data['no_local_minimizing'])) $field->set('checked', 'checked');
-
-            $fields->add($field);
         }
 
 
@@ -880,8 +867,6 @@ ON " . self::table_name . " (state) USING BTREE");
         $context = stream_context_create($this->generateStreamContextInfo($data, $post));
 
         $result = file_get_contents(self::service_url . $node, false, $context);
-
-        #echo var_dump($result);
 
         if ($json) {
             $result = json_decode($result, true);
