@@ -9,7 +9,7 @@ class ProcessImageMinimize extends WireData implements Module, ConfigurableModul
             'title' => 'ProcessImageMinimize / minimize.pw',
             'author' => 'Conclurer GbR',
             'summary' => 'Uses minimize.pw to compress your images on the fly, increasing your site load performance.',
-            'version' => 101,
+            'version' => 102,
             'href' => 'https://minimize.pw',
             'autoload' => true
         );
@@ -20,7 +20,7 @@ class ProcessImageMinimize extends WireData implements Module, ConfigurableModul
     private $log;
     private static $instance = null;
 
-    const mz_version = '1.0.1';
+    const mz_version = '1.0.2';
     const base_url = 'https://minimize.pw/';
 
     const service_url = 'https://minimize.pw/';
@@ -223,7 +223,8 @@ ON " . self::table_name . " (state) USING BTREE");
         }
         if ($this->getStateFromMinimizeQueue()) return;
         if ($this->pullMinimizedImages()) return;
-        $this->removeTemporaryMinimizedImages();
+        if ($this->removeTemporaryMinimizedImages()) return;
+        $this->removeOldDatabaseEntries();
     }
 
     /**
@@ -265,8 +266,11 @@ ON " . self::table_name . " (state) USING BTREE");
                     if ($item['added']) {
                         $id = $p[$item['source']];
                         $reference = $item['reference'];
+                        if (empty($reference)) continue;
                         $now = time();
-                        wire('db')->query("UPDATE " . self::table_name . " SET reference = '$reference', state = 1, updated_at = $now WHERE image_id = '$id'");
+                        try {
+                            wire('db')->query("UPDATE " . self::table_name . " SET reference = '$reference', state = 1, updated_at = $now WHERE image_id = '$id'");
+                        } catch (Exception $e) { }
                     } else {
                         if ($item['message'] == 'No credits left') {
                             // Set timeout to 1 hour, because the user has no credits left
@@ -421,7 +425,15 @@ ON " . self::table_name . " (state) USING BTREE");
                 $now = time();
                 wire('db')->query("UPDATE " . self::table_name . " SET state = 5, updated_at = $now WHERE image_id = '$id'");
             }
+            return true;
         }
+        return false;
+    }
+
+    protected function removeOldDatabaseEntries() {
+        $last_5_days = time()-5*24*60*60;
+        wire('db')->query("DELETE FROM " . self::table_name . " WHERE state >= 4 AND updated_at < $last_5_days");
+        return true;
     }
 
     /**
