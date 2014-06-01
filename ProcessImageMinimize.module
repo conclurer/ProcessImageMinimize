@@ -331,7 +331,7 @@ ON " . self::table_name . " (state) USING BTREE");
                     }
                 } else {
                     # Reference not found on Minimize.pw, restarting
-                    wire('db')->query("UPDATE " . self::table_name . " SET state = 0, reference = '', updated_at = $now WHERE reference = '$reference'");
+                    wire('db')->query("UPDATE " . self::table_name . " SET state = 0, reference = null, updated_at = $now WHERE reference = '$reference'");
                 }
             }
 
