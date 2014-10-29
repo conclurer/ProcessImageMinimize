@@ -8,6 +8,10 @@
 class MinimizeQueueObject extends WireData {
 
     const table = 'minimize_pw_objects';
+    const StatusProcessing = '.mz-processing';
+    const StatusReplaced = '.mz-replaced';
+    const StatusExcluded = '.mz-excluded';
+
     private static $objects = array();
     private static $defaultValues = array(
         'id' => 0,
@@ -19,7 +23,17 @@ class MinimizeQueueObject extends WireData {
         'updated' => 0
     );
 
+    public function __set($x, $y) {
+        if ($x == 'path') {
+            $y = str_replace($this->config->paths->files, '', $y);
+        }
+
+        parent::__set($x, $y);
+    }
+
     public static function getById ($id) {
+        if (isset(self::$objects[$id])) return self::$objects[$id];
+
         $instance = new self();
         $instance->id = $id;
         $instance->fetch();
@@ -36,6 +50,8 @@ class MinimizeQueueObject extends WireData {
 
         $result = $statement->fetch(PDO::FETCH_ASSOC);
         if ($result !== false) {
+            if (isset(self::$objects[$result['id']])) return self::$objects[$result['id']];
+
             $instance->id = $result['id'];
             $instance->fetch();
         }
@@ -52,6 +68,8 @@ class MinimizeQueueObject extends WireData {
 
         $result = $statement->fetch(PDO::FETCH_ASSOC);
         if ($result !== false) {
+            if (isset(self::$objects[$result['id']])) return self::$objects[$result['id']];
+
             $instance->id = $result['id'];
             $instance->fetch();
         }
@@ -67,6 +85,11 @@ class MinimizeQueueObject extends WireData {
         $statement->execute(array($status));
 
         while (($set = $statement->fetch(PDO::FETCH_ASSOC)) !== false) {
+            if (isset(self::$objects[$set['id']])) {
+                $array->add(self::$objects[$set['id']]);
+                continue;
+            }
+
             $instance = new self();
             $instance->data = $set;
             $array->add($instance);
@@ -84,9 +107,11 @@ class MinimizeQueueObject extends WireData {
     public function save() {
         $table = self::table;
         $changes = $this->getChanges();
+        $this->data['updated'] = time();
         if (count($changes) == 0) return;
 
         if ($this->data['id'] == 0) {
+            $this->data['created'] = time();
             $dx = $this->data;
             unset($dx['id']);
 
@@ -118,6 +143,22 @@ class MinimizeQueueObject extends WireData {
 
             $this->resetTrackChanges(true);
         }
+    }
+
+    public function createStatusFlagFile ($status) {
+        $pathInfo = pathinfo($this->data['path']);
+        $flagFilePath = $this->config->paths->files.$pathInfo['dirname'].DIRECTORY_SEPARATOR.'mz'.DIRECTORY_SEPARATOR.$pathInfo['basename'].$status;
+        try {
+            touch($flagFilePath);
+        } catch (Exception $e) {
+            #todo log
+        }
+    }
+
+    public function url() {
+        $http = $this->config->https ? 'https://' : 'http://';
+
+        return $http.$this->config->httpHost.$this->config->urls->files.$this->data['path'];
     }
 
     public function fetch() {

@@ -2,6 +2,8 @@
 
 class ProcessImageMinimize extends WireData implements Module, ConfigurableModule {
 
+    private $api;
+
     const statusInit = 0;
     const statusPushed = 1;
     const statusProcessedSuccess = 2;
@@ -14,6 +16,10 @@ class ProcessImageMinimize extends WireData implements Module, ConfigurableModul
             'author' => 'Conclurer GbR',
             'version' => 150
         );
+    }
+
+    public function init() {
+        $this->api = new MinimizeApiConnector($this->licenseKey); #todo
     }
 
     /**
@@ -40,6 +46,38 @@ class ProcessImageMinimize extends WireData implements Module, ConfigurableModul
         $pushObject->save();
 
         return true;
+    }
+
+    protected function pushToMinimizePw () {
+        // Get all Images with StatusInit
+        $objects = MinimizeQueueObject::findByStatus(ProcessImageMinimize::statusInit);
+        $imageUrls = array();
+        $pictures = array();
+
+        foreach ($objects as $object) {
+            $imageUrls[] = $object->url();
+            $pictures[$object->url()] = $object;
+        }
+
+        $response = $this->api->pushToMinimize($imageUrls);
+        if ($response['error']) return;
+
+        foreach ($response['items'] as $item) {
+            if ($item['added']) {
+                $object = $pictures[$item['reference']];
+                if (empty($item['reference'])) continue;
+
+                $object->reference = $item['reference'];
+                $object->state = ProcessImageMinimize::statusPushed;
+                $object->save();
+            }
+            else {
+                if ($item['message'] == 'No credits left') {
+                    #todo no credits left
+                    return;
+                }
+            }
+        }
     }
 
 
