@@ -19,6 +19,7 @@ class MinimizeQueueObject extends WireData {
         'status' => 0,
         'replaceFile' => false,
         'reference' => null,
+        'processResponse' => null,
         'created' => 0,
         'updated' => 0
     );
@@ -177,6 +178,15 @@ class MinimizeQueueObject extends WireData {
         $this->resetTrackChanges(true);
 
         self::$objects[$this->data['id']] = $this;
+    }
+
+    public function delete() {
+        $table = self::table;
+
+        $statement = $this->database->prepare("DELETE FROM $table WHERE id = ?");
+        $statement->execute(array($this->data['id']));
+
+        $this->data['id'] = 0;
     }
 
     public function exists () {

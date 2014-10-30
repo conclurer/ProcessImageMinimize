@@ -12,6 +12,10 @@ class MinimizeApiConnector extends Wire {
         return $this->apiCall('/queue/push', array('urls' => $imageUrls));
     }
 
+    public function getStatusFromMinimize ($references = array()) {
+        return $this->apiCall('/queue/state', array('references' => implode(',', $references)));
+    }
+
     private function apiCall($node, $data = array(), $submitLicense = true, $post = true, $json = true)
     {
         if ($submitLicense) $data = array_merge($data, array('license' => $this->licenseKey));

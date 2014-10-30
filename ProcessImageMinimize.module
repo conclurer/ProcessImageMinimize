@@ -1,5 +1,10 @@
 <?php
 
+/**
+ * Class ProcessImageMinimize
+ *
+ * @property MinimizeApiConnector $api
+ */
 class ProcessImageMinimize extends WireData implements Module, ConfigurableModule {
 
     private $api;
@@ -69,6 +74,7 @@ class ProcessImageMinimize extends WireData implements Module, ConfigurableModul
 
                 $object->reference = $item['reference'];
                 $object->state = ProcessImageMinimize::statusPushed;
+                $object->createStatusFlagFile(MinimizeQueueObject::StatusProcessing);
                 $object->save();
             }
             else {
@@ -80,5 +86,53 @@ class ProcessImageMinimize extends WireData implements Module, ConfigurableModul
         }
     }
 
+    public function getStatusFromMinimizePw () {
+        // Get all Images with StatusPushed
+        $objects = MinimizeQueueObject::findByStatus(ProcessImageMinimize::statusPushed);
+        $i = 0;
+        $references = array();
+        foreach ($objects as $object) {
+            $references[$object->reference] = $object;
+            $i++;
+            if ($i >= 50) break;
+        }
 
+        if (count($references) > 0) {
+            $response = $this->api->getStatusFromMinimize(array_keys($references));
+            if (!$response['error']) {
+                foreach ($response as $item) {
+                    $reference = $item['reference'];
+                    if ($item['valid']) {
+                        switch ($item['state']) {
+                            case 0:
+                            case 1:
+                                continue;
+
+                            case 2:
+                                // Processing finished
+                                $object = $references[$reference];
+                                $object->state = ProcessImageMinimize::statusProcessedSuccess;
+                                $object->processResponse = $item['processed'];
+                                $object->save();
+                                break;
+
+                            default:
+                                // Processing aborted due to error
+                                $object = $references[$reference];
+                                $object->state = ProcessImageMinimize::statusProcessedError;
+                                $object->processResponse = $item['message'];
+                                break;
+
+                        }
+                    }
+                    else {
+                        // Record not found on server, retry
+                        $object = $references[$reference];
+                        $object->delete();
+                        $this->pushToLocalQueue($object->path);
+                    }
+                }
+            }
+        }
+    }
 }
