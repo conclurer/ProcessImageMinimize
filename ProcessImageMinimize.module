@@ -3,17 +3,6 @@
 class ProcessImageMinimize extends WireData implements Module, ConfigurableModule
 {
 
-    public static function getModuleInfo()
-    {
-        return array(
-            'title' => 'ProcessImageMinimize / minimize.pw',
-            'author' => 'Conclurer GbR',
-            'summary' => 'Uses minimize.pw to compress your images on the fly, increasing your site load performance.',
-            'version' => 102,
-            'href' => 'https://minimize.pw',
-            'autoload' => true
-        );
-    }
 
     private $internalQueue = array(); # Internal queue for storing images to be minimized in the database
     private $internalQueueItemsReplaceForced = array();

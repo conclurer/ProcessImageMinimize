@@ -1,0 +1,9 @@
+{
+  "title": "minimize.pw",
+  "author": "Conclurer GbR",
+  "version": 300,
+  "summary": "Compresses images asynchronously using minimize.pw",
+  "autoload": true,
+  "singular": true,
+  "href": "https://www.minimize.pw"
+}
