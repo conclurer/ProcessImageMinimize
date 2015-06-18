@@ -2,12 +2,12 @@
 
 class ProcessImageMinimize extends WireData implements Module, ConfigurableModule
 {
-
+    protected $log, $api;
+    const RequiredDatabaseSchemaVersion = 100;
+    const ClientLibraryVersion = 300;
 
     private $internalQueue = array(); # Internal queue for storing images to be minimized in the database
     private $internalQueueItemsReplaceForced = array();
-    private $log;
-    private static $instance = null;
 
     const mz_version = '1.0.2';
     const base_url = 'https://minimize.pw/';
@@ -15,9 +15,25 @@ class ProcessImageMinimize extends WireData implements Module, ConfigurableModul
     const service_url = 'https://minimize.pw/';
     const table_name = 'process_image_minimize';
 
+    public function __get($i) {
+        $allowed = array('log');
+        if (in_array($i, $allowed)) return $this->$i;
+
+        return parent::__get($i);
+    }
 
     public function init()
     {
+        // Include License Information
+        $this->api = new MinimizeConnector(($this->data['licenseKey']||''), ($this->data['customerGUID']||''));
+
+        // Run Migrations if available
+        $currentDatabaseSchema = $this->data["currentDatabaseSchema"]||0;
+        if ($currentDatabaseSchema < self::RequiredDatabaseSchemaVersion) $this->runMigration();
+
+        if (isset($this->data['email']) && isset($this->data['licenseKey']) && !isset($this->data['authenticated'])) $this->login();
+        if (isset($this->data['logout'])) $this->logout();
+
         $this->addHook('Pageimage::minimize', $this, 'getMinimizedPicture');
         $this->addHook('Pageimage::mz', $this, 'getMinimizedPicture');
         $this->addHook('Pageimages::delete', $this, 'deleteMinimizedPicture');
@@ -35,8 +51,32 @@ class ProcessImageMinimize extends WireData implements Module, ConfigurableModul
         $this->verifyLicenseKey();
     }
 
+    public function enabled() {
+        $currentDatabaseSchema = $this->data["currentDatabaseSchema"]||0;
+        if ($currentDatabaseSchema < self::RequiredDatabaseSchemaVersion) return false;
+        if ($this->data['limitReached']) return false;
+        if (!$this->data['authenticated']) return false;
+    }
+
+    public function authenticated() {
+        return isset($this->data['authenticated']);
+    }
+
+    public function limitReached() {
+        return isset($this->data['limitReached']);
+    }
+
     public function __construct()
     {
+        // Setup log
+        $this->log = new FileLog($this->config->paths->logs.'minimize.log.txt');
+
+        // Include files
+        $classes = array('MinimizeConnector', 'MinimizeImage');
+        foreach ($classes as $class) {
+            require_once file(__DIR__).DIRECTORY_SEPARATOR.'lib'.DIRECTORY_SEPARATOR.$class.'.php';
+        }
+
         $this->licence_valid = 0;
         $this->backup_licence_key = '';
         $this->licence_key = '';
@@ -45,56 +85,71 @@ class ProcessImageMinimize extends WireData implements Module, ConfigurableModul
         $this->auto_mz_images = 0;
         $this->auto_replace_crop_images = 0;
         $this->no_local_minimizing = 0;
-        $this->log = new FileLog(wire('config')->paths->logs . 'minimize.log.txt');
+    }
 
-        if (self::$instance == null) self::$instance = $this;
+    protected function ___runMigration() {
+        require_once dirname(__FILE__).DIRECTORY_SEPARATOR.'lib'.DIRECTORY_SEPARATOR.'MinimizeDatabaseMigration.php';
+        $migration = new MinimizeDatabaseMigration($this->data['currentDatabaseSchema']);
+        $migration->migrate();
+        $this->data["currentDatabaseSchema"] = $migration->current;
+        $this->modules->saveModuleConfigData(get_class($this), $this->data);
     }
 
     public function ___install()
     {
-        if (!ini_get('allow_url_fopen')) {
-            throw new WireException("Your PHP has allow_url_fopen disabled, which is required by minimize.pw.");
+        #todo use minimize.current.sql
+        try {
+            $oldTable = 'process_image_minimize';
+            $statement = $this->database->prepare("DROP TABLE IF EXISTS `$oldTable`");
+            $statement->execute();
+        } catch (Exception $e) {
+            $this->error("Migration Error: Database Table '$oldTable' could not be removed. Please remove by hand.");
+       }
+
+        try {
+            $newTable = MinimizeImage::TableName;
+            $statement = $this->database->prepare("f"); #todo
+            $statement->execute();
+        } catch (Exception $e) {
+            throw new WireException("Database Table '$newTable' could not be created.");
         }
 
-        $sql = array("CREATE TABLE " . self::table_name . " (image_id VARCHAR(255) NOT NULL PRIMARY KEY, reference VARCHAR(24), state INT(2) NOT NULL, processed VARCHAR(255), force_replace INT(1), created_at INT(11) UNSIGNED NOT NULL, updated_at INT(11) UNSIGNED NOT NULL)", "CREATE UNIQUE INDEX minimize_api_reference
-ON " . self::table_name . " (reference) USING BTREE", "CREATE INDEX minimize_api_state
-ON " . self::table_name . " (state) USING BTREE");
-
-        foreach ($sql as $s) wire('db')->query($s);
+        $this->data["currentDatabaseSchema"] = 100;
+        $this->modules->saveModuleConfigData(get_class($this), $this->data);
     }
 
     public function ___uninstall()
     {
-        try {
-            wire('db')->query("DROP TABLE " . self::table_name);
-        } catch (Exception $e) {
+        $table = MinimizeImage::TableName;
+        $this->database->prepare("DROP TABLE `$table`");
+    }
+
+    // LICENSE MANAGEMENT
+    /**
+     * Login to minimize.pw
+     * Uses email and license from data array
+     */
+    protected function login() {
+        $response = $this->api->getCustomerGUID($this->data['email'], $this->data['licenseKey']);
+        if ($response['success']) {
+            $this->data['customerGUID'] = $response['customer_guid'];
+            $this->data['authenticated'] = true;
+            $this->modules->saveModuleConfigData(get_class($this), $this->data);
         }
     }
 
     /**
-     * Verifies the entered license key
+     * Logout of minimize.pw
+     * Removes the authentication data
      */
-    public function verifyLicenseKey()
-    {
+    protected function logout() {
+        unset($this->data['customerGUID']);
+        unset($this->data['authenticated']);
+        unset($this->data['limitReached']);
+        unset($this->data['email']);
+        unset($this->data['licenseKey']);
 
-        if ($this->backup_licence_key != $this->licence_key) {
-            if ($this->licence_key == '') {
-                $this->backup_licence_key = '';
-                $this->licence_valid = 0;
-            } else {
-                # Verify new license key
-                $x = $this->apiCall('queue/license_valid', array('license' => $this->licence_key));
-                if ($x['valid']) {
-                    $this->backup_licence_key = $this->licence_key;
-                    $this->licence_valid = 1;
-                } else {
-                    $this->licence_key = '';
-                    $this->licence_valid = 0;
-                }
-            }
-            $this->save_configuration();
-        }
-
+        $this->modules->saveModuleConfigData(get_class($this), $this->data);
     }
 
     /**
